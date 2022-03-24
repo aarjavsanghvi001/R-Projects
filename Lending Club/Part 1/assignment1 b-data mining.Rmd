@@ -1,0 +1,252 @@
+---
+title: "assignment1 b - data mining"
+Authors: "Shruti Chanda","Aarjav Sanghvi","Shubham Chaudhary"
+output: html_document
+---
+
+Code for question 5:
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggcorrplot)
+library(rpart)
+library(C50)
+
+df <- read.csv('A:/Studies/Data Mining/Datasets_made/df.csv')
+df <- subset(df,select=-c(X,disbursement_method,funded_amnt,hardship_flag, percent_bc_gt_75,bc_util,bc_open_to_buy,pymnt_plan, mths_since_recent_bc,title,debt_settlement_flag,total_rev_hi_lim,total_bc_limit,mo_sin_old_rev_tl_op,total_il_high_credit_limit,mo_sin_rcnt_rev_tl_op,total_acc,num_il_tl,num_sats,acc_open_past_24mths,num_rev_accts,num_bc_sats,num_op_rev_tl,num_actv_rev_tl,num_rev_tl_bal_gt_0,num_bc_tl,num_actv_bc_tl,mo_sin_rcnt_tl,mo_sin_old_il_acct,acc_now_delinq,num_accts_ever_120_pd, verification_status,mort_acc,pct_tl_nvr_dlq,earliest_cr_line,tot_hi_cred_lim,total_bal_ex_mort,initial_list_status,pub_rec_bankruptcies,term))
+glimpse(df)
+df <- na.omit(df)
+df$grade <- as.factor(df$grade)
+df$sub_grade <- as.factor(df$sub_grade)
+df$loan_amnt <- as.numeric(df$loan_amnt)
+df$purpose <- as.factor(df$purpose)
+df$application_type <- as.factor(df$application_type)
+df<-subset(df,select=-c(emp_length,home_ownership))
+df$loan_status <- as.factor(df$loan_status)
+
+TRNPROP = 0.7 #proportion of examples in the training sample
+
+nr<-nrow(df)
+trnIndex<- sample(1:nr, size = round(TRNPROP * nr), replace=FALSE)
+trnIndex
+lcdfTrn <- df[trnIndex, ]
+lcdfTst <- df[-trnIndex, ]
+
+
+lcDT1 <- rpart(loan_status ~., data=lcdfTrn, method="class", parms = list(split = "information"), control = rpart.control(cp=0.0001, minsplit = 50))
+printcp(lcDT1)
+lcDT1$variable.importance
+plotcp(lcDT1)
+
+predTrn=predict(lcDT1,lcdfTrn, type='class')
+table(pred = predTrn, true=lcdfTrn$loan_status)
+mean(predTrn == lcdfTrn$loan_status)
+
+CTHRESH=0.5
+predProbTrn=predict(lcDT1,lcdfTrn, type='prob')
+predTrnCT = ifelse(predProbTrn[, 'Charged Off'] > CTHRESH, 'Charged Off', 'Fully Paid')
+table(predTrnCT , true=lcdfTrn$loan_status)
+mean(predTrn == lcdfTrn$loan_status)
+
+c5_DT1 <- C5.0(lcdfTrn$loan_status~., data=lcdfTrn)
+summary(c5_DT1)
+
+###
+library(sqldf)
+dataset_factor<-sqldf("select loan_amnt,installment,int_rate,grade,sub_grade,
+                        annual_inc,loan_status,purpose,
+                       dti, pub_rec, application_type, avg_cur_bal, tax_liens
+                        from df")
+#converting the variables to factors
+dataset_factor$grade<-as.factor(dataset_factor$grade)
+dataset_factor$sub_grade<-as.factor(dataset_factor$sub_grade)
+dataset_factor$emp_length<-as.factor(dataset_factor$emp_length)
+dataset_factor$home_ownership<-as.factor(dataset_factor$home_ownership)
+dataset_factor$verification_status<-as.factor(dataset_factor$verification_status)
+dataset_factor$loan_status<-as.factor(dataset_factor$loan_status)
+dataset_factor$purpose<-as.factor(dataset_factor$purpose)
+#Splitting the data into training and test datasets
+dataset_factor_new <- floor(0.70 * nrow(dataset_factor))
+set.seed(dataset_factor_new)
+training_set_factor <- sample(seq_len(nrow(dataset_factor)), size = dataset_factor_new)
+training_data_factor <- dataset_factor[training_set_factor, ]
+test_data_factor <- dataset_factor[-training_set_factor, ]
+
+#Plotting the decision tree using C50
+modc50 <- C5.0(loan_status ~ ., data = training_data_factor)
+plot(modc50)
+summary(modc50)
+
+pred_train_c50<-predict(modc50,training_data_factor,type='class')
+table_predict_c50<-table(pred=pred_train_c50,true=training_data_factor$loan_status)
+predict_mean_c50<-mean(pred_train_c50==training_data_factor$loan_status)
+
+#Confusion matrix c50 trainind data
+library(caret)
+library(e1071)
+confusionMatrix(pred_train_c50,training_data_factor$loan_status)
+
+###c5.0 incorporating rules
+c5_rules1 <- C5.0(lcdfTrn$loan_status~., data=lcdfTrn, control=C5.0Control(minCases=10), rules=TRUE)
+predTstProb_c5dt1 <- predict(c5_DT1, lcdfTst, type='prob')
+predTst = ifelse(predTstProb_c5dt1[, "Charged Off"] >= 0.5, 'Charged Off', 'Fully Paid')
+table( pred = predTst, true=lcdfTst$loan_status)
+
+###plotting ROC and lift curve
+library(ROCR)
+score=predict(lcDT1,lcdfTst, type="prob")[,"Charged Off"]
+pred=prediction(score, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf <-performance(pred, "tpr", "fpr")
+plot(aucPerf)
+abline(a=0, b= 1)
+aucPerf=performance(pred, "auc")
+aucPerf@y.values
+liftPerf <-performance(pred, "lift", "rpp")
+plot(liftPerf)
+score=predict(c5_DT1,lcdfTst, type="prob")[,"Charged Off"]
+pred=prediction(score, lcdfTst$loan_status, label.ordering = c("Fully Paid", "Charged Off"))
+aucPerf <-performance(pred, "tpr", "fpr")
+plot(aucPerf)
+abline(a=0, b= 1)
+aucPerf=performance(pred, "auc")
+aucPerf@y.values
+liftPerf <-performance(pred, "lift", "rpp")
+plot(liftPerf)
+
+```
+
+
+code for question 6:
+```{r}
+install.packages('ranger')
+install.packages('rsample')
+install.packages('Metrics')
+install.packages('caret')
+
+library(rsample)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(ranger)
+library(Metrics)
+library(purrr)
+library(pROC)
+
+lcdf_up <- read.csv('df1.csv')
+
+# finding missing values
+which(is.na(lcdf_up))
+
+# after analyzing the records only 2 rows have missing values, so we can eliminate them
+lcdf_omit <- na.omit(lcdf_up)
+
+#converting the data into correct format before splitting into datasets for random forest
+## The conversion
+lcdf_omit[sapply(lcdf_omit, is.character)] <- lapply(lcdf_omit[sapply(lcdf_omit, is.character)], as.factor)
+
+set.seed(12345)
+
+lcdf_sample <- bootstraps(lcdf_omit, times = 3)
+
+lcdf_mut <- map(lcdf_sample$splits, function(dr){
+    dat <- as.data.frame(dr)
+})
+
+df_train <- as.data.frame(lcdf_mut[1])
+
+df_valid <- as.data.frame(lcdf_mut[2])
+
+df_test <- as.data.frame(lcdf_mut[3])
+
+#random forest models for training data
+rfModel1 <- ranger(loan_status~., data = df_train, mtry = 6, importance='impurity', probability = FALSE)
+
+rfModel2 <- ranger(loan_status~ loan_amnt + grade + sub_grade, data = df_train, num.trees=1000, importance='impurity', probability = FALSE)
+
+rfModel3 <- ranger(loan_status~ purpose + annual_inc + emp_length, data = df_train, num.trees=500, importance='impurity', probability = FALSE)
+
+rfModel4 <- ranger(loan_status~ purpose + int_rate, data = df_train, num.trees=1000, importance='impurity', probability = FALSE)
+
+###############   comparing the predictions  ########################
+
+# Calculate predictions
+predict_rfMdl1 <- predict(rfModel1, df_valid)$predictions
+predict_rfMdl2 <- predict(rfModel2, df_valid)$predictions
+predict_rfMdl3 <- predict(rfModel3, df_valid)$predictions
+predict_rfMdl4 <- predict(rfModel4, df_valid)$predictions
+
+########### Evaluating Performance  #############
+
+## Variable Importance 
+# Random Forest Model 1
+modelImp1 <- rfModel1$variable.importance/max(rfModel1$variable.importance)
+
+# Random Forest Model 2
+modelImp2 <- rfModel2$variable.importance/max(rfModel2$variable.importance)
+
+# Random Forest Model 3
+modelImp3 <- rfModel3$variable.importance/max(rfModel3$variable.importance)
+
+# Random Forest Model 4
+modelImp4 <- rfModel4$variable.importance/max(rfModel4$variable.importance)
+
+## Performance
+# Confusion Matrix
+cnfm1 <- confusionMatrix(df_valid$loan_status, predict_rfMdl1)
+cnfm2 <- confusionMatrix(df_valid$loan_status, predict_rfMdl2)
+cnfm3 <- confusionMatrix(df_valid$loan_status, predict_rfMdl3)
+cnfm4 <- confusionMatrix(df_valid$loan_status, predict_rfMdl4)
+
+# Random forest model 1
+cnfm1
+
+# Random forest model 2
+cnfm2
+
+# Random forest model 3
+cnfm3
+
+# Random forest model 4
+cnfm4
+
+# since the root mean square value is least for the random forest model 3 and confusion matrix's accuracy for random forest model 3 high. - We pick /Random forest model 3 and analyze the test data on the model
+
+# prediction on test data
+predict_test <- predict(rfModel3, df_test)$predictions
+
+# confusion matrix on test data
+cnfm_test <- confusionMatrix(df_valid$loan_status, as.factor(predict_rfMdl3))
+
+cnfm_test
+
+
+
+```
+
+
+code for question 7:
+```{r}
+library("dplyr")
+df = read.csv("C:/Users/schaud46/Downloads/dff.csv")
+df %>% group_by(loan_status) %>% summarise(mean(int_rate))
+view(df)
+glimpse(df)
+#Total Profit for fully paid loans
+df <- df %>% filter(loan_status == 'Fully Paid')
+df$ExpectedProfit <-(df$int_rate*3*100*0.01)
+df$ActualProfit <- (df$total_pymnt - df$funded_amnt)
+boxplot(df$total_pymnt,df$ExpectedProfit )
+df %>% group_by(loan_status) %>% summarise(sum(ExpectedProfit), sum(funded_amnt))
+boxplot(df$ExpectedProfit,df$total_pymnt)
+
+#Total Loss for Charged Off Loans
+df2 = read.csv("C:/Users/schaud46/Downloads/dff.csv")
+df2 <- df2 %>% filter(loan_status != "Fully Paid") 
+df2$lamt_to_recover <- (df2$funded_amnt - df2$total_pymnt_inv)
+df2 %>% group_by(loan_status) %>% summarise(sum(df2$funded_amnt),sum(df2$lamt_to_recover), sum(df2$total_pymnt))
+df %>% group_by(loan_status) %>% summarise(sum(total_pymnt))
+df %>% group_by(loan_status) %>% summarise(sum(funded_amnt))
+glimpse(df2)
+```
+
